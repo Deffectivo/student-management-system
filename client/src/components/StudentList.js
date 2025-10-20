@@ -1,12 +1,53 @@
-import React from 'react';
+import React, { useState } from 'react';
+import StudentMarks from './StudentMarks';
+import SearchBar from './SearchBar';
+import ExportButton from './ExportButton';
 
-const StudentList = ({ students, onEdit, onDelete, filters, onFilterChange }) => {
+const StudentList = ({ students, onEdit, onDelete, filters, onFilterChange, onSearch }) => {
+  const [selectedStudentForMarks, setSelectedStudentForMarks] = useState(null);
+
+  // Highlight search terms in student data
+  const highlightText = (text, searchTerm) => {
+    if (!searchTerm || !text) return text;
+    
+    const regex = new RegExp(`(${searchTerm})`, 'gi');
+    const parts = text.split(regex);
+    
+    return parts.map((part, index) =>
+      regex.test(part) ? (
+        <mark key={index} className="search-highlight">{part}</mark>
+      ) : (
+        part
+      )
+    );
+  };
+
+  const handleExportSuccess = (format) => {
+    console.log(`Successfully exported ${format}`);
+  };
+
   if (students.length === 0) {
-    return <div className="no-students">No students found.</div>;
+    return (
+      <div className="student-list">
+        <div className="search-section">
+          <SearchBar onSearch={onSearch} placeholder="Search by name, major, grade, or age..." />
+        </div>
+        <ExportButton filters={filters} onExport={handleExportSuccess} />
+        <div className="no-students">
+          No students found. Try adjusting your search or filters.
+        </div>
+      </div>
+    );
   }
 
   return (
     <div className="student-list">
+      <div className="search-section">
+        <SearchBar onSearch={onSearch} placeholder="Search by name, major, grade, or age..." />
+      </div>
+
+      <ExportButton filters={filters} onExport={handleExportSuccess} />
+
       <div className="filters">
         <select 
           value={filters.major || ''} 
@@ -55,19 +96,31 @@ const StudentList = ({ students, onEdit, onDelete, filters, onFilterChange }) =>
         </select>
       </div>
 
+      <div className="search-info">
+        <p>Found {students.length} student{students.length !== 1 ? 's' : ''}</p>
+      </div>
+
       <div className="students-grid">
         {students.map(student => (
           <div key={student.id} className="student-card">
-            <h3>{student.name}</h3>
-            <p><strong>Age:</strong> {student.age}</p>
-            <p><strong>Major:</strong> {student.major}</p>
-            <p><strong>Grade:</strong> <span className={`grade grade-${student.grade}`}>{student.grade}</span></p>
+            <h3>{highlightText(student.name, filters.search)}</h3>
+            <p><strong>Age:</strong> {highlightText(student.age.toString(), filters.search)}</p>
+            <p><strong>Major:</strong> {highlightText(student.major, filters.search)}</p>
+            <p><strong>Grade:</strong> <span className={`grade grade-${student.grade}`}>
+              {highlightText(student.grade, filters.search)}
+            </span></p>
             <div className="student-actions">
               <button 
                 onClick={() => onEdit(student)}
                 className="btn-edit"
               >
                 Edit
+              </button>
+              <button 
+                onClick={() => setSelectedStudentForMarks(student)}
+                className="btn-marks"
+              >
+                Marks
               </button>
               <button 
                 onClick={() => onDelete(student.id)}
@@ -79,6 +132,13 @@ const StudentList = ({ students, onEdit, onDelete, filters, onFilterChange }) =>
           </div>
         ))}
       </div>
+
+      {selectedStudentForMarks && (
+        <StudentMarks 
+          student={selectedStudentForMarks}
+          onClose={() => setSelectedStudentForMarks(null)}
+        />
+      )}
     </div>
   );
 };

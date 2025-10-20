@@ -1,6 +1,8 @@
 import React, { useState, useEffect } from 'react';
 import StudentForm from './components/StudentForm';
 import StudentList from './components/StudentList';
+import Login from './components/Login';
+import StudentDashboard from './components/StudentDashboard';
 import studentService from './services/studentService';
 import './App.css';
 
@@ -12,12 +14,30 @@ function App() {
     major: '',
     grade: '',
     sortBy: '',
-    sortOrder: 'ASC'
+    sortOrder: 'ASC',
+    search: '' // Add search term
   });
+  const [user, setUser] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [studentMarks, setStudentMarks] = useState([]);
 
   useEffect(() => {
-    loadStudents();
-  }, [filters]);
+    // Check if user is already logged in
+    const currentUser = studentService.getCurrentUser();
+    if (currentUser) {
+      setUser(currentUser);
+    }
+    setLoading(false);
+  }, []);
+
+  useEffect(() => {
+    if (user) {
+      loadStudents();
+      if (user.role === 'student' && user.studentId) {
+        loadStudentMarks();
+      }
+    }
+  }, [filters, user]);
 
   const loadStudents = async () => {
     try {
@@ -25,8 +45,42 @@ function App() {
       setStudents(data);
     } catch (error) {
       console.error('Error loading students:', error);
-      alert('Error loading students. Make sure the backend server is running on port 5000.');
+      if (error.response?.status === 401) {
+        // Token expired, logout
+        handleLogout();
+      } else {
+        alert('Error loading students');
+      }
     }
+  };
+
+  const loadStudentMarks = async () => {
+    try {
+      const marks = await studentService.getStudentMarks(user.studentId);
+      setStudentMarks(marks);
+    } catch (error) {
+      console.error('Error loading student marks:', error);
+    }
+  };
+
+  // Add search handler function
+  const handleSearch = (searchTerm) => {
+    setFilters(prev => ({
+      ...prev,
+      search: searchTerm
+    }));
+  };
+
+  const handleLogin = () => {
+    const currentUser = studentService.getCurrentUser();
+    setUser(currentUser);
+  };
+
+  const handleLogout = () => {
+    studentService.logout();
+    setUser(null);
+    setStudents([]);
+    setStudentMarks([]);
   };
 
   const handleSaveStudent = async (studentData) => {
@@ -69,16 +123,42 @@ function App() {
     }));
   };
 
+  if (loading) {
+    return <div className="loading">Loading...</div>;
+  }
+
+  if (!user) {
+    return <Login onLogin={handleLogin} />;
+  }
+
+  // Get the current student for the dashboard (if user is a student)
+  const currentStudent = user.role === 'student' 
+    ? students.find(s => s.id === user.studentId) 
+    : null;
+
   return (
     <div className="App">
       <header className="App-header">
-        <h1>Student Management System</h1>
-        <button 
-          onClick={() => setShowForm(true)}
-          className="btn-primary"
-        >
-          Add New Student
-        </button>
+        <div className="header-left">
+          <h1>Student Management System</h1>
+          <div className="user-info">
+            Welcome, {user.username} ({user.role})
+          </div>
+        </div>
+        
+        <div className="header-actions">
+          {user.role === 'admin' && (
+            <button 
+              onClick={() => setShowForm(true)}
+              className="btn-primary"
+            >
+              Add New Student
+            </button>
+          )}
+          <button onClick={handleLogout} className="btn-secondary">
+            Logout
+          </button>
+        </div>
       </header>
 
       <main>
@@ -91,6 +171,11 @@ function App() {
               setEditingStudent(null);
             }}
           />
+        ) : user.role === 'student' ? (
+          <StudentDashboard 
+            student={currentStudent}
+            marks={studentMarks}
+          />
         ) : (
           <StudentList
             students={students}
@@ -98,6 +183,7 @@ function App() {
             onDelete={handleDeleteStudent}
             filters={filters}
             onFilterChange={handleFilterChange}
+            onSearch={handleSearch}
           />
         )}
       </main>
