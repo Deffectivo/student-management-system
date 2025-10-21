@@ -3,45 +3,79 @@ const router = express.Router();
 const sqlite3 = require('sqlite3').verbose();
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
+const crypto = require('crypto');
+const nodemailer = require('nodemailer');
 
-const JWT_SECRET = 'your-secret-key-here'; // Change this in production!
+const JWT_SECRET = 'your-secret-key-here';
 
-// Updated export routes to handle token in query parameter
-router.get('/export/csv', (req, res) => {
-  const { access_token, ...filters } = req.query;
-  
-  // Manual token verification for export routes
-  if (!access_token) {
-    return res.status(401).json({ error: 'Access token required' });
-  }
+// ========== ID GENERATOR ==========
+const generateSecureStudentId = () => {
+  const randomBytes = crypto.randomBytes(4); // 4 bytes = 8 hex characters
+  return 'STU-' + randomBytes.toString('hex').toUpperCase().substring(0, 6);
+};
 
-  try {
-    const user = jwt.verify(access_token, JWT_SECRET);
-    req.user = user;
-  } catch (err) {
-    return res.status(403).json({ error: 'Invalid or expired token' });
-  }
-
-  // Rest of your CSV export code...
+// ========== EMAIL CONFIGURATION ==========
+const transporter = nodemailer.createTransport({
+  service: 'gmail',
+  auth: {
+    user: 'dahmenyassine@gmail.com', // Gmail address
+    pass: 'ogsa dazu ddis yrpe' // ←  App Password
+  },
+  debug: true, // This will show detailed email logs
+  logger: true
 });
 
-router.get('/export/pdf', (req, res) => {
-  const { access_token, ...filters } = req.query;
-  
-  // Manual token verification for export routes
-  if (!access_token) {
-    return res.status(401).json({ error: 'Access token required' });
-  }
-
+const sendStudentIdEmail = async (email, studentId, username) => {
   try {
-    const user = jwt.verify(access_token, JWT_SECRET);
-    req.user = user;
-  } catch (err) {
-    return res.status(403).json({ error: 'Invalid or expired token' });
-  }
+    console.log(`📧 Attempting to send email to: ${email}`);
+    console.log(`🔑 Using email: dahmenyassine@gmail.com`);
+    
+    const mailOptions = {
+      from: '"Student Management System" <dahmenyassine@gmail.com>',
+      to: email,
+      subject: 'Your Student ID - Student Management System',
+      html: `
+        <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
+          <h2 style="color: #007bff;">🎓 Student Management System</h2>
+          <p>Hello <strong>${username}</strong>,</p>
+          <p>Your student account has been successfully created!</p>
+          <div style="background: #f8f9fa; padding: 20px; border-radius: 8px; margin: 20px 0; border-left: 4px solid #28a745;">
+            <h3 style="color: #28a745; margin: 0;">Your Student ID: <strong style="font-size: 1.2em;">${studentId}</strong></h3>
+          </div>
+          <p><strong>🔐 Please save this ID securely!</strong> You'll need it to:</p>
+          <ul>
+            <li>Access your student dashboard</li>
+            <li>View your grades and test marks</li>
+            <li>Recover your account if needed</li>
+          </ul>
+          <p>If you didn't create this account, please contact the administrator immediately.</p>
+          <hr style="border: none; border-top: 1px solid #eee; margin: 20px 0;">
+          <p style="color: #6c757d; font-size: 12px;">
+            This is an automated message. Please do not reply to this email.
+          </p>
+        </div>
+      `
+    };
 
-  // Rest of your PDF export code...
-});
+    console.log('📨 Sending email with options:', { 
+      from: mailOptions.from, 
+      to: mailOptions.to,
+      subject: mailOptions.subject 
+    });
+
+    const info = await transporter.sendMail(mailOptions);
+    console.log(`✅ Email sent successfully to: ${email}`);
+    console.log(`📨 Message ID: ${info.messageId}`);
+    console.log(`📤 Response: ${info.response}`);
+    return true;
+  } catch (error) {
+    console.error('❌ Email sending failed:');
+    console.error('   Error message:', error.message);
+    console.error('   Error code:', error.code);
+    console.error('   Command:', error.command);
+    return false;
+  }
+};
 
 // Initialize database
 const db = new sqlite3.Database('./students.db', (err) => {
@@ -49,8 +83,10 @@ const db = new sqlite3.Database('./students.db', (err) => {
     console.error('Error opening database:', err.message);
   } else {
     console.log('✅ Connected to SQLite database.');
+    
+    // Update students table to use TEXT ID for custom IDs
     db.run(`CREATE TABLE IF NOT EXISTS students (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      id TEXT PRIMARY KEY,  -- Changed to TEXT for custom IDs like STU-XXXXXX
       name TEXT NOT NULL,
       age INTEGER NOT NULL,
       major TEXT NOT NULL,
@@ -58,13 +94,14 @@ const db = new sqlite3.Database('./students.db', (err) => {
       created_at DATETIME DEFAULT CURRENT_TIMESTAMP
     )`);
 
-    // Create users table for authentication
+    // Update users table to include email (without UNIQUE constraint initially)
     db.run(`CREATE TABLE IF NOT EXISTS users (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       username TEXT UNIQUE NOT NULL,
       password TEXT NOT NULL,
+      email TEXT,  -- Added email field (no UNIQUE constraint initially)
       role TEXT NOT NULL CHECK(role IN ('admin', 'student')),
-      student_id INTEGER,
+      student_id TEXT UNIQUE,      -- Changed to TEXT
       created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
       FOREIGN KEY (student_id) REFERENCES students (id) ON DELETE CASCADE
     )`, (err) => {
@@ -85,10 +122,10 @@ const db = new sqlite3.Database('./students.db', (err) => {
       }
     });
 
-    // Create student_marks table
+    // Create student_marks table (student_id now TEXT)
     db.run(`CREATE TABLE IF NOT EXISTS student_marks (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
-      student_id INTEGER NOT NULL,
+      student_id TEXT NOT NULL,    -- Changed to TEXT
       test_name TEXT NOT NULL,
       subject TEXT NOT NULL,
       marks_obtained INTEGER NOT NULL,
@@ -106,7 +143,7 @@ const db = new sqlite3.Database('./students.db', (err) => {
   }
 });
 
-// ========== MIDDLEWARE DEFINITIONS (PUT THESE FIRST!) ==========
+// ========== MIDDLEWARE DEFINITIONS ==========
 
 // Middleware to verify JWT token
 const authenticateToken = (req, res, next) => {
@@ -136,6 +173,299 @@ const requireAdmin = (req, res, next) => {
 
 const json2csv = require('json2csv').parse;
 const PDFDocument = require('pdfkit');
+
+// ========== DATABASE FIX ROUTES ==========
+
+// Fix missing email column (handles existing data)
+router.get('/fix-schema', (req, res) => {
+  console.log('🛠️ Checking and fixing users table schema...');
+  
+  // First check if email column exists
+  db.all(`PRAGMA table_info(users)`, (err, columns) => {
+    if (err) {
+      console.error('❌ Error checking schema:', err.message);
+      return res.status(500).json({ error: err.message });
+    }
+    
+    const hasEmail = columns.some(col => col.name === 'email');
+    
+    if (hasEmail) {
+      console.log('✅ Email column already exists');
+      return res.json({ 
+        message: 'Email column already exists in users table',
+        status: 'already_exists'
+      });
+    }
+    
+    // Add the email column WITHOUT UNIQUE constraint first
+    db.run(`ALTER TABLE users ADD COLUMN email TEXT`, function(err) {
+      if (err) {
+        console.error('❌ Error adding email column:', err.message);
+        return res.status(500).json({ 
+          error: 'Failed to add email column',
+          details: err.message 
+        });
+      }
+      
+      console.log('✅ Email column added successfully!');
+      
+      // Update existing records to have placeholder emails
+      db.run(`UPDATE users SET email = 'user' || id || '@placeholder.com' WHERE email IS NULL`, function(updateErr) {
+        if (updateErr) {
+          console.warn('🟡 Could not set placeholder emails:', updateErr.message);
+        } else {
+          console.log('✅ Set placeholder emails for existing users');
+        }
+        
+        res.json({ 
+          message: 'Email column added to users table successfully! You can now use email registration.',
+          status: 'added',
+          changes: this.changes
+        });
+      });
+    });
+  });
+});
+
+// Check current schema
+router.get('/debug/users-schema', (req, res) => {
+  db.all(`PRAGMA table_info(users)`, (err, columns) => {
+    if (err) {
+      return res.status(500).json({ error: err.message });
+    }
+    console.log('📋 CURRENT USERS TABLE COLUMNS:');
+    columns.forEach(col => {
+      console.log(`   - ${col.name} (${col.type})`);
+    });
+    res.json(columns);
+  });
+});
+
+// ========== AUTHENTICATION ROUTES ==========
+
+// POST /auth/register - Student registration with email verification
+router.post('/auth/register', async (req, res) => {
+  console.log('🔵 REGISTRATION STARTED');
+  
+  try {
+    const { username, password, email } = req.body;
+    console.log('🔵 Request body:', { username, email });
+
+    // Validation
+    if (!username || !password || !email) {
+      return res.status(400).json({ error: 'Username, password, and email are required' });
+    }
+
+    // Email validation
+    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+    if (!emailRegex.test(email)) {
+      return res.status(400).json({ error: 'Please provide a valid email address' });
+    }
+
+    // Password strength check
+    if (password.length < 6) {
+      return res.status(400).json({ error: 'Password must be at least 6 characters long' });
+    }
+
+    console.log('🔵 Starting database checks...');
+
+    // Check if username already exists
+    db.get('SELECT * FROM users WHERE username = ?', [username], async (err, existingUser) => {
+      if (err) {
+        console.error('🔴 DATABASE ERROR (username check):', err.message);
+        return res.status(500).json({ 
+          error: 'Database error during username check',
+          details: err.message 
+        });
+      }
+      
+      if (existingUser) {
+        console.log('🔴 Username already exists:', username);
+        return res.status(400).json({ error: 'Username already exists' });
+      }
+
+      console.log('🟢 Username available');
+
+      // Check if email already exists (manual check)
+      db.get('SELECT * FROM users WHERE email = ?', [email], async (err, existingEmail) => {
+        if (err) {
+          // If error is about missing email column, guide user to fix schema
+          if (err.message.includes('no such column: email')) {
+            console.error('🔴 EMAIL COLUMN MISSING - Run /fix-schema first');
+            return res.status(500).json({ 
+              error: 'Database configuration required',
+              details: 'Please visit /students/fix-schema to set up the database first',
+              fixUrl: '/students/fix-schema'
+            });
+          }
+          
+          console.error('🔴 DATABASE ERROR (email check):', err.message);
+          return res.status(500).json({ 
+            error: 'Database error during email check',
+            details: err.message 
+          });
+        }
+        
+        if (existingEmail) {
+          console.log('🔴 Email already registered:', email);
+          return res.status(400).json({ error: 'Email already registered' });
+        }
+
+        console.log('🟢 Email available');
+
+        // Generate NUMERIC student ID to match database schema
+        const studentId = Math.floor(100000 + Math.random() * 900000); // Random 6-digit number
+        console.log('🎯 Generated Student ID:', studentId);
+
+        // Create student record
+        db.run(
+          'INSERT INTO students (id, name, age, major, grade) VALUES (?, ?, ?, ?, ?)',
+          [studentId, username, 18, 'General', 'A'],
+          function(err) {
+            if (err) {
+              console.error('🔴 STUDENT INSERT ERROR:', err.message);
+              return res.status(500).json({ 
+                error: 'Error creating student record',
+                details: err.message 
+              });
+            }
+
+            console.log('✅ Student record created with ID:', studentId);
+
+            // Create user account WITH email
+            db.run(
+              'INSERT INTO users (username, password, email, role, student_id) VALUES (?, ?, ?, ?, ?)',
+              [username, password, email, 'student', studentId],
+              async function(err) {
+                if (err) {
+                  console.error('🔴 USER INSERT ERROR:', err.message);
+                  
+                  // Rollback student record if user creation fails
+                  db.run('DELETE FROM students WHERE id = ?', [studentId]);
+                  
+                  return res.status(500).json({ 
+                    error: 'Error creating user account',
+                    details: err.message 
+                  });
+                }
+
+                console.log('✅ User account created with email:', email);
+
+                // Send welcome email with student ID
+                try {
+                  console.log('📧 Attempting to send welcome email...');
+                  const emailSent = await sendStudentIdEmail(email, studentId, username);
+                  
+                  if (emailSent) {
+                    console.log('✅ Welcome email sent successfully');
+                  } else {
+                    console.warn('🟡 Email sending failed, but registration completed');
+                  }
+
+                  console.log('🎉 REGISTRATION COMPLETED SUCCESSFULLY!');
+                  
+                  res.status(201).json({
+                    message: emailSent 
+                      ? 'Account created successfully! Check your email for your Student ID.' 
+                      : 'Account created successfully!',
+                    user: {
+                      id: this.lastID,
+                      username,
+                      email,
+                      role: 'student',
+                      studentId: studentId
+                    },
+                    studentId: studentId,
+                    emailSent: emailSent
+                  });
+
+                } catch (emailError) {
+                  console.warn('🟡 Email error (non-critical):', emailError.message);
+                  
+                  // Registration still successful even if email fails
+                  res.status(201).json({
+                    message: 'Account created successfully!',
+                    user: {
+                      id: this.lastID,
+                      username,
+                      email,
+                      role: 'student',
+                      studentId: studentId
+                    },
+                    studentId: studentId,
+                    emailSent: false,
+                    emailError: 'Welcome email could not be sent'
+                  });
+                }
+              }
+            );
+          }
+        );
+      });
+    });
+  } catch (error) {
+    console.error('🔴 UNEXPECTED ERROR:', error);
+    res.status(500).json({ 
+      error: 'Unexpected server error during registration',
+      details: error.message 
+    });
+  }
+});
+
+// POST /auth/login - User login
+router.post('/auth/login', async (req, res) => {
+  const { username, password } = req.body;
+
+  if (!username || !password) {
+    return res.status(400).json({ error: 'Username and password are required' });
+  }
+
+  try {
+    // Find user in database
+    db.get('SELECT * FROM users WHERE username = ?', [username], async (err, user) => {
+      if (err) {
+        return res.status(500).json({ error: 'Database error' });
+      }
+      
+      if (!user) {
+        return res.status(401).json({ error: 'Invalid credentials' });
+      }
+
+      // Check password (for now using simple comparison, in production use bcrypt.compare)
+      const isPasswordValid = password === user.password;
+      
+      if (!isPasswordValid) {
+        return res.status(401).json({ error: 'Invalid credentials' });
+      }
+
+      // Create JWT token
+      const token = jwt.sign(
+        { 
+          id: user.id, 
+          username: user.username, 
+          role: user.role,
+          studentId: user.student_id 
+        }, 
+        JWT_SECRET, 
+        { expiresIn: '24h' }
+      );
+
+      res.json({
+        message: 'Login successful',
+        token,
+        user: {
+          id: user.id,
+          username: user.username,
+          role: user.role,
+          studentId: user.student_id,
+          email: user.email
+        }
+      });
+    });
+  } catch (error) {
+    res.status(500).json({ error: 'Server error during login' });
+  }
+});
 
 // ========== EXPORT ROUTES ==========
 
@@ -346,129 +676,6 @@ router.get('/export/statistics', authenticateToken, (req, res) => {
   });
 });
 
-// ========== AUTHENTICATION ROUTES ==========
-
-// POST /auth/login - User login
-router.post('/auth/login', async (req, res) => {
-  const { username, password } = req.body;
-
-  if (!username || !password) {
-    return res.status(400).json({ error: 'Username and password are required' });
-  }
-
-  try {
-    // Find user in database
-    db.get('SELECT * FROM users WHERE username = ?', [username], async (err, user) => {
-      if (err) {
-        return res.status(500).json({ error: 'Database error' });
-      }
-      
-      if (!user) {
-        return res.status(401).json({ error: 'Invalid credentials' });
-      }
-
-      // Check password (for now using simple comparison, in production use bcrypt.compare)
-      const isPasswordValid = password === user.password;
-      
-      if (!isPasswordValid) {
-        return res.status(401).json({ error: 'Invalid credentials' });
-      }
-
-      // Create JWT token
-      const token = jwt.sign(
-        { 
-          id: user.id, 
-          username: user.username, 
-          role: user.role,
-          studentId: user.student_id 
-        }, 
-        JWT_SECRET, 
-        { expiresIn: '24h' }
-      );
-
-      res.json({
-        message: 'Login successful',
-        token,
-        user: {
-          id: user.id,
-          username: user.username,
-          role: user.role,
-          studentId: user.student_id
-        }
-      });
-    });
-  } catch (error) {
-    res.status(500).json({ error: 'Server error during login' });
-  }
-});
-
-// POST /auth/register - Student registration
-router.post('/auth/register', async (req, res) => {
-  const { username, password, studentId } = req.body;
-
-  if (!username || !password || !studentId) {
-    return res.status(400).json({ error: 'Username, password, and student ID are required' });
-  }
-
-  try {
-    // Check if student exists
-    db.get('SELECT * FROM students WHERE id = ?', [studentId], async (err, student) => {
-      if (err) {
-        return res.status(500).json({ error: 'Database error' });
-      }
-      
-      if (!student) {
-        return res.status(400).json({ error: 'Student ID not found' });
-      }
-
-      // Check if username already exists
-      db.get('SELECT * FROM users WHERE username = ?', [username], async (err, existingUser) => {
-        if (err) {
-          return res.status(500).json({ error: 'Database error' });
-        }
-        
-        if (existingUser) {
-          return res.status(400).json({ error: 'Username already exists' });
-        }
-
-        // Check if student already has an account
-        db.get('SELECT * FROM users WHERE student_id = ?', [studentId], async (err, studentAccount) => {
-          if (err) {
-            return res.status(500).json({ error: 'Database error' });
-          }
-          
-          if (studentAccount) {
-            return res.status(400).json({ error: 'This student already has an account' });
-          }
-
-          // Create the student account
-          db.run(
-            'INSERT INTO users (username, password, role, student_id) VALUES (?, ?, ?, ?)',
-            [username, password, 'student', studentId],
-            function(err) {
-              if (err) {
-                return res.status(500).json({ error: 'Error creating account' });
-              }
-              
-              res.status(201).json({
-                message: 'Student account created successfully',
-                user: {
-                  id: this.lastID,
-                  username,
-                  role: 'student',
-                  studentId
-                }
-              });
-            }
-          );
-        });
-      });
-    });
-  } catch (error) {
-    res.status(500).json({ error: 'Server error during registration' });
-  }
-});
-
 // ========== STUDENT ROUTES (WITH AUTHENTICATION) ==========
 
 // GET /students - Get all students with filtering, sorting, and searching
@@ -652,6 +859,68 @@ router.get('/marks/subjects', authenticateToken, (req, res) => {
       return;
     }
     res.json(rows.map(row => row.subject));
+  });
+});
+
+// TEMPORARY: Delete user by username or email
+router.delete('/debug/delete-user/:identifier', (req, res) => {
+  const { identifier } = req.params;
+  
+  console.log(`Attempting to delete user: ${identifier}`);
+  
+  // First, find the user and their student_id
+  db.get('SELECT * FROM users WHERE username = ? OR email = ?', [identifier, identifier], (err, user) => {
+    if (err) {
+      return res.status(500).json({ error: err.message });
+    }
+    
+    if (!user) {
+      return res.status(404).json({ error: 'User not found' });
+    }
+    
+    console.log('Found user:', user);
+    
+    // Delete user account
+    db.run('DELETE FROM users WHERE id = ?', [user.id], function(err) {
+      if (err) {
+        return res.status(500).json({ error: err.message });
+      }
+      
+      console.log(`Deleted user: ${user.username}`);
+      
+      // If user has a student record, delete it too
+      if (user.student_id) {
+        db.run('DELETE FROM students WHERE id = ?', [user.student_id], function(err) {
+          if (err) {
+            console.warn('Could not delete student record:', err.message);
+          } else {
+            console.log(`Deleted student record: ${user.student_id}`);
+          }
+          
+          res.json({ 
+            message: `Successfully deleted user '${user.username}' and their student record`,
+            deletedUser: user.username,
+            deletedStudentId: user.student_id
+          });
+        });
+      } else {
+        res.json({ 
+          message: `Successfully deleted user '${user.username}'`,
+          deletedUser: user.username
+        });
+      }
+    });
+  });
+});
+
+// TEMPORARY: List all users
+router.get('/debug/all-users', (req, res) => {
+  db.all('SELECT id, username, email, role, student_id FROM users', (err, users) => {
+    if (err) {
+      return res.status(500).json({ error: err.message });
+    }
+    console.log('All users:', users);
+    res.json(users);
   });
 });
 

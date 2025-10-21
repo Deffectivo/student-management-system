@@ -39,20 +39,22 @@ function App() {
     }
   }, [filters, user]);
 
-  const loadStudents = async () => {
-    try {
-      const data = await studentService.getStudents(filters);
-      setStudents(data);
-    } catch (error) {
-      console.error('Error loading students:', error);
-      if (error.response?.status === 401) {
-        // Token expired, logout
-        handleLogout();
-      } else {
-        alert('Error loading students');
-      }
+const loadStudents = async () => {
+  try {
+    const data = await studentService.getStudents(filters);
+    setStudents(data);
+  } catch (error) {
+    console.error('Error loading students:', error);
+    
+    // Handle token expiration specifically
+    if (error.response?.status === 403 || error.response?.status === 401) {
+      console.log('Token expired or invalid, logging out...');
+      handleLogout();
+    } else {
+      alert('Error loading students. Make sure the backend server is running on port 5000.');
     }
-  };
+  }
+};
 
   const loadStudentMarks = async () => {
     try {

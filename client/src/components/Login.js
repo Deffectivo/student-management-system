@@ -9,9 +9,9 @@ const Login = ({ onLogin }) => {
   });
   const [registerData, setRegisterData] = useState({
     username: '',
+    email: '',
     password: '',
-    confirmPassword: '',
-    studentId: ''
+    confirmPassword: ''
   });
   const [loading, setLoading] = useState(false);
 
@@ -42,21 +42,34 @@ const Login = ({ onLogin }) => {
       return;
     }
 
+    // Basic email validation
+    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+    if (!emailRegex.test(registerData.email)) {
+      alert('Please enter a valid email address');
+      return;
+    }
+
     setLoading(true);
     
     try {
-      await studentService.register(
+      const result = await studentService.register(
         registerData.username, 
-        registerData.password, 
-        registerData.studentId
+        registerData.password,
+        registerData.email
       );
-      alert('Registration successful! You can now login.');
+      
+      let successMessage = result.message;
+      if (result.studentId && !result.emailSent) {
+        successMessage += `\n\nYour Student ID: ${result.studentId}\n\nSave this ID securely!`;
+      }
+      
+      alert(successMessage);
       setIsRegistering(false);
       setRegisterData({
         username: '',
+        email: '',
         password: '',
-        confirmPassword: '',
-        studentId: ''
+        confirmPassword: ''
       });
     } catch (error) {
       alert(error.response?.data?.error || 'Registration failed');
@@ -137,24 +150,8 @@ const Login = ({ onLogin }) => {
         ) : (
           // REGISTRATION FORM
           <>
-            <h3>Student Registration</h3>
+            <h3>Create Student Account</h3>
             <form onSubmit={handleRegister}>
-              <div className="form-group">
-                <label>Student ID:</label>
-                <input
-                  type="number"
-                  name="studentId"
-                  value={registerData.studentId}
-                  onChange={handleRegisterChange}
-                  required
-                  placeholder="Enter your student ID"
-                  min="1"
-                />
-                <small className="help-text">
-                  Your student ID is provided by your institution
-                </small>
-              </div>
-              
               <div className="form-group">
                 <label>Username:</label>
                 <input
@@ -165,6 +162,21 @@ const Login = ({ onLogin }) => {
                   required
                   placeholder="Choose a username"
                 />
+              </div>
+              
+              <div className="form-group">
+                <label>Email:</label>
+                <input
+                  type="email"
+                  name="email"
+                  value={registerData.email}
+                  onChange={handleRegisterChange}
+                  required
+                  placeholder="Enter your email address"
+                />
+                <small className="help-text">
+                  Your Student ID will be sent to this email
+                </small>
               </div>
               
               <div className="form-group">
@@ -197,7 +209,7 @@ const Login = ({ onLogin }) => {
                 className="btn-primary" 
                 disabled={loading}
               >
-                {loading ? 'Registering...' : 'Register'}
+                {loading ? 'Creating Account...' : 'Create Account'}
               </button>
             </form>
             
@@ -218,7 +230,7 @@ const Login = ({ onLogin }) => {
         <div className="demo-accounts">
           <h4>Demo Accounts:</h4>
           <p><strong>Admin:</strong> username: <code>admin</code>, password: <code>admin123</code></p>
-          <p><em>Student accounts can be created using your student ID</em></p>
+          <p><em>Create your own student account - a unique Student ID will be generated and emailed to you</em></p>
         </div>
       </div>
     </div>

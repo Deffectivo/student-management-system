@@ -26,28 +26,17 @@ const StudentList = ({ students, onEdit, onDelete, filters, onFilterChange, onSe
     console.log(`Successfully exported ${format}`);
   };
 
-  if (students.length === 0) {
-    return (
-      <div className="student-list">
-        <div className="search-section">
-          <SearchBar onSearch={onSearch} placeholder="Search by name, major, grade, or age..." />
-        </div>
-        <ExportButton filters={filters} onExport={handleExportSuccess} />
-        <div className="no-students">
-          No students found. Try adjusting your search or filters.
-        </div>
-      </div>
-    );
-  }
-
   return (
     <div className="student-list">
+      {/* Always show search section */}
       <div className="search-section">
         <SearchBar onSearch={onSearch} placeholder="Search by name, major, grade, or age..." />
       </div>
 
+      {/* Always show export buttons */}
       <ExportButton filters={filters} onExport={handleExportSuccess} />
 
+      {/* Always show filters */}
       <div className="filters">
         <select 
           value={filters.major || ''} 
@@ -94,44 +83,79 @@ const StudentList = ({ students, onEdit, onDelete, filters, onFilterChange, onSe
           <option value="ASC">Ascending</option>
           <option value="DESC">Descending</option>
         </select>
+
+        {/* Add a clear filters button */}
+        <button 
+          onClick={() => {
+            onFilterChange('major', '');
+            onFilterChange('grade', '');
+            onFilterChange('sortBy', '');
+            onFilterChange('sortOrder', 'ASC');
+            onSearch(''); // Clear search too
+          }}
+          className="btn-clear-filters"
+        >
+          Clear All Filters
+        </button>
       </div>
 
+      {/* Show search info and results */}
       <div className="search-info">
-        <p>Found {students.length} student{students.length !== 1 ? 's' : ''}</p>
-      </div>
+  <p>
+    {students.length === 0 ? 'No students' : `${students.length} student${students.length !== 1 ? 's' : ''}`} found
+    {filters.major && ` in ${filters.major}`}
+    {filters.grade && ` with grade ${filters.grade}`}
+    {filters.search && ` matching "${filters.search}"`}
+  </p>
+</div>
 
-      <div className="students-grid">
-        {students.map(student => (
-          <div key={student.id} className="student-card">
-            <h3>{highlightText(student.name, filters.search)}</h3>
-            <p><strong>Age:</strong> {highlightText(student.age.toString(), filters.search)}</p>
-            <p><strong>Major:</strong> {highlightText(student.major, filters.search)}</p>
-            <p><strong>Grade:</strong> <span className={`grade grade-${student.grade}`}>
-              {highlightText(student.grade, filters.search)}
-            </span></p>
-            <div className="student-actions">
-              <button 
-                onClick={() => onEdit(student)}
-                className="btn-edit"
-              >
-                Edit
-              </button>
-              <button 
-                onClick={() => setSelectedStudentForMarks(student)}
-                className="btn-marks"
-              >
-                Marks
-              </button>
-              <button 
-                onClick={() => onDelete(student.id)}
-                className="btn-delete"
-              >
-                Delete
-              </button>
+      {/* Show students or empty state */}
+      {students.length === 0 ? (
+        <div className="no-students">
+          <h3>No Students Found</h3>
+          <p>Try adjusting your search criteria or filters.</p>
+          <p>Suggestions:</p>
+          <ul>
+            <li>Select "All Majors" instead of a specific major</li>
+            <li>Clear the search box</li>
+            <li>Select "All Grades" instead of a specific grade</li>
+            <li>Add some students with the current criteria</li>
+          </ul>
+        </div>
+      ) : (
+        <div className="students-grid">
+          {students.map(student => (
+            <div key={student.id} className="student-card">
+              <h3>{highlightText(student.name, filters.search)}</h3>
+              <p><strong>Age:</strong> {highlightText(student.age.toString(), filters.search)}</p>
+              <p><strong>Major:</strong> {highlightText(student.major, filters.search)}</p>
+              <p><strong>Grade:</strong> <span className={`grade grade-${student.grade}`}>
+                {highlightText(student.grade, filters.search)}
+              </span></p>
+              <div className="student-actions">
+                <button 
+                  onClick={() => onEdit(student)}
+                  className="btn-edit"
+                >
+                  Edit
+                </button>
+                <button 
+                  onClick={() => setSelectedStudentForMarks(student)}
+                  className="btn-marks"
+                >
+                  Marks
+                </button>
+                <button 
+                  onClick={() => onDelete(student.id)}
+                  className="btn-delete"
+                >
+                  Delete
+                </button>
+              </div>
             </div>
-          </div>
-        ))}
-      </div>
+          ))}
+        </div>
+      )}
 
       {selectedStudentForMarks && (
         <StudentMarks 

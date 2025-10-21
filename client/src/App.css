@@ -643,3 +643,65 @@
     justify-content: center;
   }
 }
+
+/* Clear Filters Button */
+.btn-clear-filters {
+  background: #6c757d;
+  color: white;
+  border: none;
+  padding: 8px 16px;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 14px;
+  transition: all 0.3s ease;
+}
+
+.btn-clear-filters:hover {
+  background: #5a6268;
+  transform: translateY(-1px);
+}
+
+/* Enhanced No Students State */
+.no-students {
+  background: #f8f9fa;
+  padding: 40px;
+  border-radius: 8px;
+  text-align: center;
+  border: 2px dashed #dee2e6;
+  margin-top: 20px;
+}
+
+.no-students h3 {
+  color: #6c757d;
+  margin-bottom: 15px;
+}
+
+.no-students p {
+  color: #6c757d;
+  margin-bottom: 10px;
+}
+
+.no-students ul {
+  text-align: left;
+  display: inline-block;
+  color: #6c757d;
+}
+
+.no-students li {
+  margin-bottom: 5px;
+}
+
+/* Improved Search Info */
+.search-info {
+  background: #e9ecef;
+  padding: 10px 15px;
+  border-radius: 5px;
+  margin-bottom: 20px;
+  border-left: 4px solid #007bff;
+}
+
+.search-info p {
+  margin: 0;
+  font-weight: 500;
+  color: #495057;
+}
