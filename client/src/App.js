@@ -15,14 +15,14 @@ function App() {
     grade: '',
     sortBy: '',
     sortOrder: 'ASC',
-    search: '' // Add search term
+    search: ''
   });
   const [user, setUser] = useState(null);
   const [loading, setLoading] = useState(true);
   const [studentMarks, setStudentMarks] = useState([]);
+  const [backendError, setBackendError] = useState('');
 
   useEffect(() => {
-    // Check if user is already logged in
     const currentUser = studentService.getCurrentUser();
     if (currentUser) {
       setUser(currentUser);
@@ -39,22 +39,24 @@ function App() {
     }
   }, [filters, user]);
 
-const loadStudents = async () => {
-  try {
-    const data = await studentService.getStudents(filters);
-    setStudents(data);
-  } catch (error) {
-    console.error('Error loading students:', error);
-    
-    // Handle token expiration specifically
-    if (error.response?.status === 403 || error.response?.status === 401) {
-      console.log('Token expired or invalid, logging out...');
-      handleLogout();
-    } else {
-      alert('Error loading students. Make sure the backend server is running on port 5000.');
+  const loadStudents = async () => {
+    try {
+      setBackendError('');
+      const data = await studentService.getStudents(filters);
+      setStudents(data);
+    } catch (error) {
+      console.error('Error loading students:', error);
+      
+      if (error.response?.status === 403 || error.response?.status === 401) {
+        console.log('Token expired or invalid, logging out...');
+        handleLogout();
+      } else if (error.code === 'ERR_NETWORK' || error.message.includes('Network Error')) {
+        setBackendError('Cannot connect to backend server. Make sure it\'s running on port 5000.');
+      } else {
+        setBackendError('Error loading students. Please try again.');
+      }
     }
-  }
-};
+  };
 
   const loadStudentMarks = async () => {
     try {
@@ -65,7 +67,6 @@ const loadStudents = async () => {
     }
   };
 
-  // Add search handler function
   const handleSearch = (searchTerm) => {
     setFilters(prev => ({
       ...prev,
@@ -76,6 +77,7 @@ const loadStudents = async () => {
   const handleLogin = () => {
     const currentUser = studentService.getCurrentUser();
     setUser(currentUser);
+    setBackendError('');
   };
 
   const handleLogout = () => {
@@ -83,10 +85,12 @@ const loadStudents = async () => {
     setUser(null);
     setStudents([]);
     setStudentMarks([]);
+    setBackendError('');
   };
 
   const handleSaveStudent = async (studentData) => {
     try {
+      setBackendError('');
       if (editingStudent) {
         await studentService.updateStudent(editingStudent.id, studentData);
       } else {
@@ -97,7 +101,11 @@ const loadStudents = async () => {
       loadStudents();
     } catch (error) {
       console.error('Error saving student:', error);
-      alert('Error saving student');
+      if (error.code === 'ERR_NETWORK') {
+        setBackendError('Cannot connect to backend server. Make sure it\'s running on port 5000.');
+      } else {
+        alert('Error saving student: ' + (error.response?.data?.error || error.message));
+      }
     }
   };
 
@@ -109,11 +117,16 @@ const loadStudents = async () => {
   const handleDeleteStudent = async (id) => {
     if (window.confirm('Are you sure you want to delete this student?')) {
       try {
+        setBackendError('');
         await studentService.deleteStudent(id);
         loadStudents();
       } catch (error) {
         console.error('Error deleting student:', error);
-        alert('Error deleting student');
+        if (error.code === 'ERR_NETWORK') {
+          setBackendError('Cannot connect to backend server. Make sure it\'s running on port 5000.');
+        } else {
+          alert('Error deleting student: ' + (error.response?.data?.error || error.message));
+        }
       }
     }
   };
@@ -125,6 +138,11 @@ const loadStudents = async () => {
     }));
   };
 
+  const handleRetryConnection = () => {
+    setBackendError('');
+    loadStudents();
+  };
+
   if (loading) {
     return <div className="loading">Loading...</div>;
   }
@@ -133,7 +151,6 @@ const loadStudents = async () => {
     return <Login onLogin={handleLogin} />;
   }
 
-  // Get the current student for the dashboard (if user is a student)
   const currentStudent = user.role === 'student' 
     ? students.find(s => s.id === user.studentId) 
     : null;
@@ -162,6 +179,19 @@ const loadStudents = async () => {
           </button>
         </div>
       </header>
+
+      {/* Backend Connection Error Banner */}
+      {backendError && (
+        <div className="error-banner">
+          <div className="error-content">
+            <span className="error-icon">⚠️</span>
+            <span>{backendError}</span>
+            <button onClick={handleRetryConnection} className="btn-retry">
+              Retry Connection
+            </button>
+          </div>
+        </div>
+      )}
 
       <main>
         {showForm ? (

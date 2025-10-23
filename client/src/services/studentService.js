@@ -214,55 +214,101 @@ register: async (username, password, email) => {
 
   // ========== EXPORT METHODS ==========
 
-  // Export to CSV
-  exportToCSV: async (filters = {}) => {
-    try {
-      const token = localStorage.getItem('token');
-      const params = new URLSearchParams();
-      
-      Object.keys(filters).forEach(key => {
-        if (filters[key]) {
-          params.append(key, filters[key]);
-        }
-      });
+  // Export to CSV - Fixed version
+exportToCSV: async (filters = {}) => {
+  try {
+    const token = localStorage.getItem('token');
+    const params = new URLSearchParams();
+    
+    Object.keys(filters).forEach(key => {
+      if (filters[key]) {
+        params.append(key, filters[key]);
+      }
+    });
 
-      const response = await axios.get(`${API_BASE_URL}/export/csv?${params}`, {
-        headers: {
-          'Authorization': `Bearer ${token}`
-        },
-        responseType: 'blob' // Important for file downloads
-      });
-      return response.data;
-    } catch (error) {
-      console.error('Error exporting CSV:', error);
-      throw error;
+    const response = await axios.get(`${API_BASE_URL}/export/csv?${params}`, {
+      headers: {
+        'Authorization': `Bearer ${token}`
+      },
+      responseType: 'blob'
+    });
+
+    // Create blob and download
+    const blob = new Blob([response.data], { type: 'text/csv' });
+    const url = window.URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    
+    // Get filename from response headers
+    const contentDisposition = response.headers['content-disposition'];
+    let filename = 'students-export.csv';
+    if (contentDisposition) {
+      const filenameMatch = contentDisposition.match(/filename="?(.+)"?/);
+      if (filenameMatch && filenameMatch.length === 2) {
+        filename = filenameMatch[1];
+      }
     }
-  },
+    
+    link.download = filename;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    window.URL.revokeObjectURL(url);
+    
+    return { success: true, message: 'CSV downloaded successfully' };
+  } catch (error) {
+    console.error('Error exporting CSV:', error);
+    throw error;
+  }
+},
 
-  // Export to PDF
-  exportToPDF: async (filters = {}) => {
-    try {
-      const token = localStorage.getItem('token');
-      const params = new URLSearchParams();
-      
-      Object.keys(filters).forEach(key => {
-        if (filters[key]) {
-          params.append(key, filters[key]);
-        }
-      });
+// Export to PDF - Fixed version
+exportToPDF: async (filters = {}) => {
+  try {
+    const token = localStorage.getItem('token');
+    const params = new URLSearchParams();
+    
+    Object.keys(filters).forEach(key => {
+      if (filters[key]) {
+        params.append(key, filters[key]);
+      }
+    });
 
-      const response = await axios.get(`${API_BASE_URL}/export/pdf?${params}`, {
-        headers: {
-          'Authorization': `Bearer ${token}`
-        },
-        responseType: 'blob' // Important for file downloads
-      });
-      return response.data;
-    } catch (error) {
-      console.error('Error exporting PDF:', error);
-      throw error;
+    const response = await axios.get(`${API_BASE_URL}/export/pdf?${params}`, {
+      headers: {
+        'Authorization': `Bearer ${token}`
+      },
+      responseType: 'blob'
+    });
+
+    // Create blob and download
+    const blob = new Blob([response.data], { type: 'application/pdf' });
+    const url = window.URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    
+    // Get filename from response headers
+    const contentDisposition = response.headers['content-disposition'];
+    let filename = 'students-report.pdf';
+    if (contentDisposition) {
+      const filenameMatch = contentDisposition.match(/filename="?(.+)"?/);
+      if (filenameMatch && filenameMatch.length === 2) {
+        filename = filenameMatch[1];
+      }
     }
-  },
+    
+    link.download = filename;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    window.URL.revokeObjectURL(url);
+    
+    return { success: true, message: 'PDF downloaded successfully' };
+  } catch (error) {
+    console.error('Error exporting PDF:', error);
+    throw error;
+  }
+},
 
   // Get statistics for dashboard
   getStatistics: async () => {

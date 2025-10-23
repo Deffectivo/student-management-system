@@ -5,17 +5,26 @@ const bodyParser = require('body-parser');
 const app = express();
 const PORT = process.env.PORT || 5000;
 
-// Simple CORS - allow all origins (for development)
-app.use(cors());
-
-// Or more specific:
-// app.use(cors({
-//   origin: 'http://localhost:3000'
-// }));
+// More specific CORS configuration
+app.use(cors({
+  origin: 'http://localhost:3000',
+  credentials: true,
+  methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
+  allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With']
+}));
 
 // Middleware
 app.use(bodyParser.json());
 app.use(bodyParser.urlencoded({ extended: true }));
+
+// Test CORS route
+app.get('/test-cors', (req, res) => {
+  res.json({ 
+    message: 'CORS is working!',
+    headers: req.headers,
+    timestamp: new Date().toISOString()
+  });
+});
 
 // Import routes
 const studentRoutes = require('./routes/students');
@@ -28,4 +37,5 @@ app.get('/test', (req, res) => {
 
 app.listen(PORT, () => {
   console.log(`✅ Server is running on port ${PORT}`);
+  console.log(`✅ CORS enabled for: http://localhost:3000`);
 });

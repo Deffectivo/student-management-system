@@ -43,3 +43,16 @@ A full-stack web application for managing student records with advanced features
 - **HTTP Client**: Axios with interceptors
 
 ## 📁 Project Structure
+
+student-management-system/
+├── server/ # Backend API
+│ ├── routes/
+│ │ └── students.js # All API routes
+│ ├── package.json
+│ └── server.js
+├── src/ # Frontend React app
+│ ├── services/
+│ │ └── studentService.js
+│ ├── components/
+│ └── App.js
+└── README.md

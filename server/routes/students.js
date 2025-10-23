@@ -1,16 +1,17 @@
 const express = require('express');
 const router = express.Router();
 const sqlite3 = require('sqlite3').verbose();
-const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
 const crypto = require('crypto');
 const nodemailer = require('nodemailer');
+const { Parser } = require('json2csv');
+const PDFDocument = require('pdfkit');
 
 const JWT_SECRET = 'your-secret-key-here';
 
 // ========== ID GENERATOR ==========
 const generateSecureStudentId = () => {
-  const randomBytes = crypto.randomBytes(4); // 4 bytes = 8 hex characters
+  const randomBytes = crypto.randomBytes(4);
   return 'STU-' + randomBytes.toString('hex').toUpperCase().substring(0, 6);
 };
 
@@ -18,18 +19,13 @@ const generateSecureStudentId = () => {
 const transporter = nodemailer.createTransport({
   service: 'gmail',
   auth: {
-    user: 'dahmenyassine@gmail.com', // Gmail address
-    pass: 'ogsa dazu ddis yrpe' // ←  App Password
-  },
-  debug: true, // This will show detailed email logs
-  logger: true
+    user: 'dahmenyassine@gmail.com',
+    pass: 'ogsa dazu ddis yrpe'
+  }
 });
 
 const sendStudentIdEmail = async (email, studentId, username) => {
   try {
-    console.log(`📧 Attempting to send email to: ${email}`);
-    console.log(`🔑 Using email: dahmenyassine@gmail.com`);
-    
     const mailOptions = {
       from: '"Student Management System" <dahmenyassine@gmail.com>',
       to: email,
@@ -57,22 +53,11 @@ const sendStudentIdEmail = async (email, studentId, username) => {
       `
     };
 
-    console.log('📨 Sending email with options:', { 
-      from: mailOptions.from, 
-      to: mailOptions.to,
-      subject: mailOptions.subject 
-    });
-
-    const info = await transporter.sendMail(mailOptions);
-    console.log(`✅ Email sent successfully to: ${email}`);
-    console.log(`📨 Message ID: ${info.messageId}`);
-    console.log(`📤 Response: ${info.response}`);
+    await transporter.sendMail(mailOptions);
+    console.log(`✅ Email sent to: ${email}`);
     return true;
   } catch (error) {
-    console.error('❌ Email sending failed:');
-    console.error('   Error message:', error.message);
-    console.error('   Error code:', error.code);
-    console.error('   Command:', error.command);
+    console.error('❌ Email sending failed:', error.message);
     return false;
   }
 };
@@ -84,9 +69,8 @@ const db = new sqlite3.Database('./students.db', (err) => {
   } else {
     console.log('✅ Connected to SQLite database.');
     
-    // Update students table to use TEXT ID for custom IDs
     db.run(`CREATE TABLE IF NOT EXISTS students (
-      id TEXT PRIMARY KEY,  -- Changed to TEXT for custom IDs like STU-XXXXXX
+      id TEXT PRIMARY KEY,
       name TEXT NOT NULL,
       age INTEGER NOT NULL,
       major TEXT NOT NULL,
@@ -94,14 +78,13 @@ const db = new sqlite3.Database('./students.db', (err) => {
       created_at DATETIME DEFAULT CURRENT_TIMESTAMP
     )`);
 
-    // Update users table to include email (without UNIQUE constraint initially)
     db.run(`CREATE TABLE IF NOT EXISTS users (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       username TEXT UNIQUE NOT NULL,
       password TEXT NOT NULL,
-      email TEXT,  -- Added email field (no UNIQUE constraint initially)
+      email TEXT,
       role TEXT NOT NULL CHECK(role IN ('admin', 'student')),
-      student_id TEXT UNIQUE,      -- Changed to TEXT
+      student_id TEXT UNIQUE,
       created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
       FOREIGN KEY (student_id) REFERENCES students (id) ON DELETE CASCADE
     )`, (err) => {
@@ -110,7 +93,7 @@ const db = new sqlite3.Database('./students.db', (err) => {
       } else {
         console.log('✅ Users table ready');
         
-        // Add a default admin user
+        // Add default admin user
         db.run(`INSERT OR IGNORE INTO users (username, password, role) VALUES (?, ?, ?)`, 
         ['admin', 'admin123', 'admin'], (err) => {
           if (err) {
@@ -122,10 +105,9 @@ const db = new sqlite3.Database('./students.db', (err) => {
       }
     });
 
-    // Create student_marks table (student_id now TEXT)
     db.run(`CREATE TABLE IF NOT EXISTS student_marks (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
-      student_id TEXT NOT NULL,    -- Changed to TEXT
+      student_id TEXT NOT NULL,
       test_name TEXT NOT NULL,
       subject TEXT NOT NULL,
       marks_obtained INTEGER NOT NULL,
@@ -143,12 +125,10 @@ const db = new sqlite3.Database('./students.db', (err) => {
   }
 });
 
-// ========== MIDDLEWARE DEFINITIONS ==========
-
-// Middleware to verify JWT token
+// ========== MIDDLEWARE ==========
 const authenticateToken = (req, res, next) => {
   const authHeader = req.headers['authorization'];
-  const token = authHeader && authHeader.split(' ')[1]; // Bearer TOKEN
+  const token = authHeader && authHeader.split(' ')[1];
 
   if (!token) {
     return res.status(401).json({ error: 'Access token required' });
@@ -163,7 +143,6 @@ const authenticateToken = (req, res, next) => {
   });
 };
 
-// Middleware to check if user is admin
 const requireAdmin = (req, res, next) => {
   if (req.user.role !== 'admin') {
     return res.status(403).json({ error: 'Admin access required' });
@@ -171,150 +150,92 @@ const requireAdmin = (req, res, next) => {
   next();
 };
 
-const json2csv = require('json2csv').parse;
-const PDFDocument = require('pdfkit');
-
-// ========== DATABASE FIX ROUTES ==========
-
-// Fix missing email column (handles existing data)
-router.get('/fix-schema', (req, res) => {
-  console.log('🛠️ Checking and fixing users table schema...');
-  
-  // First check if email column exists
-  db.all(`PRAGMA table_info(users)`, (err, columns) => {
-    if (err) {
-      console.error('❌ Error checking schema:', err.message);
-      return res.status(500).json({ error: err.message });
-    }
-    
-    const hasEmail = columns.some(col => col.name === 'email');
-    
-    if (hasEmail) {
-      console.log('✅ Email column already exists');
-      return res.json({ 
-        message: 'Email column already exists in users table',
-        status: 'already_exists'
-      });
-    }
-    
-    // Add the email column WITHOUT UNIQUE constraint first
-    db.run(`ALTER TABLE users ADD COLUMN email TEXT`, function(err) {
-      if (err) {
-        console.error('❌ Error adding email column:', err.message);
-        return res.status(500).json({ 
-          error: 'Failed to add email column',
-          details: err.message 
-        });
-      }
-      
-      console.log('✅ Email column added successfully!');
-      
-      // Update existing records to have placeholder emails
-      db.run(`UPDATE users SET email = 'user' || id || '@placeholder.com' WHERE email IS NULL`, function(updateErr) {
-        if (updateErr) {
-          console.warn('🟡 Could not set placeholder emails:', updateErr.message);
-        } else {
-          console.log('✅ Set placeholder emails for existing users');
-        }
-        
-        res.json({ 
-          message: 'Email column added to users table successfully! You can now use email registration.',
-          status: 'added',
-          changes: this.changes
-        });
-      });
-    });
-  });
+// ========== CORS HANDLING FOR EXPORTS ==========
+// Handle preflight OPTIONS requests for export routes
+router.options('/export/csv', (req, res) => {
+  res.header('Access-Control-Allow-Origin', 'http://localhost:3000');
+  res.header('Access-Control-Allow-Methods', 'GET, OPTIONS');
+  res.header('Access-Control-Allow-Headers', 'Content-Type, Authorization');
+  res.sendStatus(200);
 });
 
-// Check current schema
-router.get('/debug/users-schema', (req, res) => {
-  db.all(`PRAGMA table_info(users)`, (err, columns) => {
-    if (err) {
-      return res.status(500).json({ error: err.message });
-    }
-    console.log('📋 CURRENT USERS TABLE COLUMNS:');
-    columns.forEach(col => {
-      console.log(`   - ${col.name} (${col.type})`);
-    });
-    res.json(columns);
-  });
+router.options('/export/pdf', (req, res) => {
+  res.header('Access-Control-Allow-Origin', 'http://localhost:3000');
+  res.header('Access-Control-Allow-Methods', 'GET, OPTIONS');
+  res.header('Access-Control-Allow-Headers', 'Content-Type, Authorization');
+  res.sendStatus(200);
+});
+
+// ========== TEST PDF ROUTE ==========
+router.get('/test-pdf', (req, res) => {
+  try {
+    console.log('Testing PDF generation...');
+    const doc = new PDFDocument();
+    
+    res.setHeader('Content-Type', 'application/pdf');
+    res.setHeader('Content-Disposition', 'inline; filename="test.pdf"');
+    res.setHeader('Access-Control-Allow-Origin', 'http://localhost:3000');
+    
+    doc.pipe(res);
+    doc.fontSize(25).text('This is a test PDF!', 100, 100);
+    doc.text('If you can see this, PDF generation works!', 100, 150);
+    doc.text(`Generated: ${new Date().toLocaleString()}`, 100, 200);
+    doc.end();
+    
+    console.log('✅ Test PDF generated successfully');
+  } catch (error) {
+    console.error('❌ Test PDF error:', error);
+    res.status(500).json({ error: error.message });
+  }
 });
 
 // ========== AUTHENTICATION ROUTES ==========
-
-// POST /auth/register - Student registration with email verification
 router.post('/auth/register', async (req, res) => {
   console.log('🔵 REGISTRATION STARTED');
   
   try {
     const { username, password, email } = req.body;
-    console.log('🔵 Request body:', { username, email });
 
-    // Validation
     if (!username || !password || !email) {
       return res.status(400).json({ error: 'Username, password, and email are required' });
     }
 
-    // Email validation
     const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
     if (!emailRegex.test(email)) {
       return res.status(400).json({ error: 'Please provide a valid email address' });
     }
 
-    // Password strength check
     if (password.length < 6) {
       return res.status(400).json({ error: 'Password must be at least 6 characters long' });
     }
 
-    console.log('🔵 Starting database checks...');
-
-    // Check if username already exists
+    // Check username
     db.get('SELECT * FROM users WHERE username = ?', [username], async (err, existingUser) => {
       if (err) {
-        console.error('🔴 DATABASE ERROR (username check):', err.message);
-        return res.status(500).json({ 
-          error: 'Database error during username check',
-          details: err.message 
-        });
+        return res.status(500).json({ error: 'Database error during username check' });
       }
       
       if (existingUser) {
-        console.log('🔴 Username already exists:', username);
         return res.status(400).json({ error: 'Username already exists' });
       }
 
-      console.log('🟢 Username available');
-
-      // Check if email already exists (manual check)
+      // Check email
       db.get('SELECT * FROM users WHERE email = ?', [email], async (err, existingEmail) => {
         if (err) {
-          // If error is about missing email column, guide user to fix schema
           if (err.message.includes('no such column: email')) {
-            console.error('🔴 EMAIL COLUMN MISSING - Run /fix-schema first');
             return res.status(500).json({ 
-              error: 'Database configuration required',
-              details: 'Please visit /students/fix-schema to set up the database first',
-              fixUrl: '/students/fix-schema'
+              error: 'Database configuration required - please run schema fix first'
             });
           }
-          
-          console.error('🔴 DATABASE ERROR (email check):', err.message);
-          return res.status(500).json({ 
-            error: 'Database error during email check',
-            details: err.message 
-          });
+          return res.status(500).json({ error: 'Database error during email check' });
         }
         
         if (existingEmail) {
-          console.log('🔴 Email already registered:', email);
           return res.status(400).json({ error: 'Email already registered' });
         }
 
-        console.log('🟢 Email available');
-
-        // Generate NUMERIC student ID to match database schema
-        const studentId = Math.floor(100000 + Math.random() * 900000); // Random 6-digit number
+        // Generate student ID
+        const studentId = Math.floor(100000 + Math.random() * 900000).toString();
         console.log('🎯 Generated Student ID:', studentId);
 
         // Create student record
@@ -323,80 +244,36 @@ router.post('/auth/register', async (req, res) => {
           [studentId, username, 18, 'General', 'A'],
           function(err) {
             if (err) {
-              console.error('🔴 STUDENT INSERT ERROR:', err.message);
-              return res.status(500).json({ 
-                error: 'Error creating student record',
-                details: err.message 
-              });
+              return res.status(500).json({ error: 'Error creating student record' });
             }
 
-            console.log('✅ Student record created with ID:', studentId);
-
-            // Create user account WITH email
+            // Create user account
             db.run(
               'INSERT INTO users (username, password, email, role, student_id) VALUES (?, ?, ?, ?, ?)',
               [username, password, email, 'student', studentId],
               async function(err) {
                 if (err) {
-                  console.error('🔴 USER INSERT ERROR:', err.message);
-                  
-                  // Rollback student record if user creation fails
                   db.run('DELETE FROM students WHERE id = ?', [studentId]);
-                  
-                  return res.status(500).json({ 
-                    error: 'Error creating user account',
-                    details: err.message 
-                  });
+                  return res.status(500).json({ error: 'Error creating user account' });
                 }
 
-                console.log('✅ User account created with email:', email);
-
-                // Send welcome email with student ID
-                try {
-                  console.log('📧 Attempting to send welcome email...');
-                  const emailSent = await sendStudentIdEmail(email, studentId, username);
-                  
-                  if (emailSent) {
-                    console.log('✅ Welcome email sent successfully');
-                  } else {
-                    console.warn('🟡 Email sending failed, but registration completed');
-                  }
-
-                  console.log('🎉 REGISTRATION COMPLETED SUCCESSFULLY!');
-                  
-                  res.status(201).json({
-                    message: emailSent 
-                      ? 'Account created successfully! Check your email for your Student ID.' 
-                      : 'Account created successfully!',
-                    user: {
-                      id: this.lastID,
-                      username,
-                      email,
-                      role: 'student',
-                      studentId: studentId
-                    },
-                    studentId: studentId,
-                    emailSent: emailSent
-                  });
-
-                } catch (emailError) {
-                  console.warn('🟡 Email error (non-critical):', emailError.message);
-                  
-                  // Registration still successful even if email fails
-                  res.status(201).json({
-                    message: 'Account created successfully!',
-                    user: {
-                      id: this.lastID,
-                      username,
-                      email,
-                      role: 'student',
-                      studentId: studentId
-                    },
-                    studentId: studentId,
-                    emailSent: false,
-                    emailError: 'Welcome email could not be sent'
-                  });
-                }
+                // Send welcome email
+                const emailSent = await sendStudentIdEmail(email, studentId, username);
+                
+                res.status(201).json({
+                  message: emailSent 
+                    ? 'Account created successfully! Check your email for your Student ID.' 
+                    : 'Account created successfully!',
+                  user: {
+                    id: this.lastID,
+                    username,
+                    email,
+                    role: 'student',
+                    studentId: studentId
+                  },
+                  studentId: studentId,
+                  emailSent: emailSent
+                });
               }
             );
           }
@@ -405,14 +282,10 @@ router.post('/auth/register', async (req, res) => {
     });
   } catch (error) {
     console.error('🔴 UNEXPECTED ERROR:', error);
-    res.status(500).json({ 
-      error: 'Unexpected server error during registration',
-      details: error.message 
-    });
+    res.status(500).json({ error: 'Unexpected server error during registration' });
   }
 });
 
-// POST /auth/login - User login
 router.post('/auth/login', async (req, res) => {
   const { username, password } = req.body;
 
@@ -420,72 +293,67 @@ router.post('/auth/login', async (req, res) => {
     return res.status(400).json({ error: 'Username and password are required' });
   }
 
-  try {
-    // Find user in database
-    db.get('SELECT * FROM users WHERE username = ?', [username], async (err, user) => {
-      if (err) {
-        return res.status(500).json({ error: 'Database error' });
-      }
-      
-      if (!user) {
-        return res.status(401).json({ error: 'Invalid credentials' });
-      }
+  db.get('SELECT * FROM users WHERE username = ?', [username], async (err, user) => {
+    if (err) {
+      return res.status(500).json({ error: 'Database error' });
+    }
+    
+    if (!user) {
+      return res.status(401).json({ error: 'Invalid credentials' });
+    }
 
-      // Check password (for now using simple comparison, in production use bcrypt.compare)
-      const isPasswordValid = password === user.password;
-      
-      if (!isPasswordValid) {
-        return res.status(401).json({ error: 'Invalid credentials' });
+    const isPasswordValid = password === user.password;
+    
+    if (!isPasswordValid) {
+      return res.status(401).json({ error: 'Invalid credentials' });
+    }
+
+    const token = jwt.sign(
+      { 
+        id: user.id, 
+        username: user.username, 
+        role: user.role,
+        studentId: user.student_id 
+      }, 
+      JWT_SECRET, 
+      { expiresIn: '24h' }
+    );
+
+    res.json({
+      message: 'Login successful',
+      token,
+      user: {
+        id: user.id,
+        username: user.username,
+        role: user.role,
+        studentId: user.student_id,
+        email: user.email
       }
-
-      // Create JWT token
-      const token = jwt.sign(
-        { 
-          id: user.id, 
-          username: user.username, 
-          role: user.role,
-          studentId: user.student_id 
-        }, 
-        JWT_SECRET, 
-        { expiresIn: '24h' }
-      );
-
-      res.json({
-        message: 'Login successful',
-        token,
-        user: {
-          id: user.id,
-          username: user.username,
-          role: user.role,
-          studentId: user.student_id,
-          email: user.email
-        }
-      });
     });
-  } catch (error) {
-    res.status(500).json({ error: 'Server error during login' });
-  }
+  });
 });
 
 // ========== EXPORT ROUTES ==========
-
-// GET /export/csv - Export students to CSV
 router.get('/export/csv', authenticateToken, (req, res) => {
+  // Add CORS headers
+  res.header('Access-Control-Allow-Origin', 'http://localhost:3000');
+  res.header('Access-Control-Allow-Methods', 'GET, OPTIONS');
+  res.header('Access-Control-Allow-Headers', 'Content-Type, Authorization');
+
   const { major, grade, search } = req.query;
   
   let query = 'SELECT * FROM students WHERE 1=1';
   const params = [];
 
-  // Apply filters
   if (req.user.role === 'student' && req.user.studentId) {
     query += ' AND id = ?';
     params.push(req.user.studentId);
   }
 
   if (search) {
-    query += ' AND (name LIKE ? OR major LIKE ? OR grade LIKE ? OR CAST(age AS TEXT) LIKE ?)';
+    query += ' AND (name LIKE ? OR major LIKE ? OR grade LIKE ?)';
     const searchTerm = `%${search}%`;
-    params.push(searchTerm, searchTerm, searchTerm, searchTerm);
+    params.push(searchTerm, searchTerm, searchTerm);
   }
 
   if (major) {
@@ -506,144 +374,151 @@ router.get('/export/csv', authenticateToken, (req, res) => {
     }
 
     try {
-      const fields = ['id', 'name', 'age', 'major', 'grade', 'created_at'];
-      const csv = json2csv(students, { fields });
+      const fields = [
+        { label: 'Student ID', value: 'id' },
+        { label: 'Name', value: 'name' },
+        { label: 'Age', value: 'age' },
+        { label: 'Major', value: 'major' },
+        { label: 'Grade', value: 'grade' },
+        { label: 'Created Date', value: 'created_at' }
+      ];
+      
+      const parser = new Parser({ fields });
+      const csv = parser.parse(students);
 
-      res.header('Content-Type', 'text/csv');
-      res.attachment(`students-export-${new Date().toISOString().split('T')[0]}.csv`);
+      res.setHeader('Content-Type', 'text/csv');
+      res.setHeader('Content-Disposition', `attachment; filename="students-${Date.now()}.csv"`);
       res.send(csv);
+      
     } catch (error) {
+      console.error('CSV generation error:', error);
       res.status(500).json({ error: 'Error generating CSV' });
     }
   });
 });
 
-// GET /export/pdf - Export students to PDF report
 router.get('/export/pdf', authenticateToken, (req, res) => {
-  const { major, grade, search } = req.query;
-  
-  let query = 'SELECT * FROM students WHERE 1=1';
-  const params = [];
+  try {
+    // Add CORS headers
+    res.header('Access-Control-Allow-Origin', 'http://localhost:3000');
+    res.header('Access-Control-Allow-Methods', 'GET, OPTIONS');
+    res.header('Access-Control-Allow-Headers', 'Content-Type, Authorization');
 
-  // Apply filters
-  if (req.user.role === 'student' && req.user.studentId) {
-    query += ' AND id = ?';
-    params.push(req.user.studentId);
-  }
+    const { major, grade, search } = req.query;
+    
+    let query = 'SELECT * FROM students WHERE 1=1';
+    const params = [];
 
-  if (search) {
-    query += ' AND (name LIKE ? OR major LIKE ? OR grade LIKE ? OR CAST(age AS TEXT) LIKE ?)';
-    const searchTerm = `%${search}%`;
-    params.push(searchTerm, searchTerm, searchTerm, searchTerm);
-  }
-
-  if (major) {
-    query += ' AND major = ?';
-    params.push(major);
-  }
-
-  if (grade) {
-    query += ' AND grade = ?';
-    params.push(grade);
-  }
-
-  query += ' ORDER BY created_at DESC';
-
-  db.all(query, params, (err, students) => {
-    if (err) {
-      return res.status(500).json({ error: err.message });
+    if (req.user.role === 'student' && req.user.studentId) {
+      query += ' AND id = ?';
+      params.push(req.user.studentId);
     }
 
-    try {
-      const doc = new PDFDocument();
-      const filename = `students-report-${new Date().toISOString().split('T')[0]}.pdf`;
+    if (search) {
+      query += ' AND (name LIKE ? OR major LIKE ? OR grade LIKE ?)';
+      const searchTerm = `%${search}%`;
+      params.push(searchTerm, searchTerm, searchTerm);
+    }
 
-      res.setHeader('Content-Type', 'application/pdf');
-      res.setHeader('Content-Disposition', `attachment; filename=${filename}`);
+    if (major) {
+      query += ' AND major = ?';
+      params.push(major);
+    }
 
-      doc.pipe(res);
+    if (grade) {
+      query += ' AND grade = ?';
+      params.push(grade);
+    }
 
-      // Add title
-      doc.fontSize(20).text('Student Management System Report', 100, 100);
-      doc.fontSize(12).text(`Generated on: ${new Date().toLocaleDateString()}`, 100, 130);
-      doc.fontSize(12).text(`Total Students: ${students.length}`, 100, 150);
-      
-      // Add filters info
-      let yPosition = 180;
-      if (major || grade || search) {
-        doc.fontSize(12).text('Applied Filters:', 100, yPosition);
-        yPosition += 20;
-        if (major) doc.text(`• Major: ${major}`, 120, yPosition);
-        if (grade) doc.text(`• Grade: ${grade}`, 120, yPosition + 20);
-        if (search) doc.text(`• Search: ${search}`, 120, yPosition + 40);
-        yPosition += 60;
+    query += ' ORDER BY created_at DESC';
+
+    db.all(query, params, (err, students) => {
+      if (err) {
+        console.error('Database error:', err);
+        return res.status(500).json({ error: err.message });
       }
 
-      // Add table headers
-      doc.fontSize(10);
-      const tableTop = yPosition + 30;
-      doc.text('ID', 50, tableTop);
-      doc.text('Name', 80, tableTop);
-      doc.text('Age', 200, tableTop);
-      doc.text('Major', 240, tableTop);
-      doc.text('Grade', 350, tableTop);
+      console.log(`📊 Generating PDF for ${students.length} students`);
 
-      // Add students data
-      let y = tableTop + 20;
-      students.forEach((student, index) => {
-        if (y > 700) { // New page if needed
-          doc.addPage();
-          y = 100;
-        }
+      try {
+        const doc = new PDFDocument();
+        const filename = `students-report-${Date.now()}.pdf`;
+
+        // Set headers
+        res.setHeader('Content-Type', 'application/pdf');
+        res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+
+        // Handle PDF errors
+        doc.on('error', (error) => {
+          console.error('PDF stream error:', error);
+          if (!res.headersSent) {
+            res.status(500).json({ error: 'PDF generation failed' });
+          }
+        });
+
+        // Pipe to response
+        doc.pipe(res);
+
+        // Simple PDF content
+        doc.fontSize(20).text('STUDENT MANAGEMENT SYSTEM', 50, 50);
+        doc.fontSize(12).text(`Report Generated: ${new Date().toLocaleString()}`, 50, 80);
+        doc.text(`Total Students: ${students.length}`, 50, 100);
         
-        doc.text(student.id.toString(), 50, y);
-        doc.text(student.name, 80, y);
-        doc.text(student.age.toString(), 200, y);
-        doc.text(student.major, 240, y);
-        doc.text(student.grade, 350, y);
+        // Add a line
+        doc.moveTo(50, 120).lineTo(550, 120).stroke();
         
-        y += 20;
-      });
+        let y = 150;
+        
+        // Simple table headers
+        doc.fontSize(10);
+        doc.text('ID', 50, y);
+        doc.text('NAME', 100, y);
+        doc.text('AGE', 250, y);
+        doc.text('MAJOR', 300, y);
+        doc.text('GRADE', 450, y);
+        
+        y += 30;
+        
+        // Student data
+        students.forEach((student, index) => {
+          // Simple page break
+          if (y > 700) {
+            doc.addPage();
+            y = 50;
+            // Add headers on new page
+            doc.text('ID', 50, y);
+            doc.text('NAME', 100, y);
+            doc.text('AGE', 250, y);
+            doc.text('MAJOR', 300, y);
+            doc.text('GRADE', 450, y);
+            y += 30;
+          }
+          
+          doc.text(student.id.toString(), 50, y);
+          doc.text(student.name, 100, y);
+          doc.text(student.age.toString(), 250, y);
+          doc.text(student.major, 300, y);
+          doc.text(student.grade, 450, y);
+          
+          y += 20;
+        });
 
-      // Add statistics
-      doc.addPage();
-      doc.fontSize(16).text('Statistics Summary', 100, 100);
-      
-      // Calculate statistics
-      const gradeCount = students.reduce((acc, student) => {
-        acc[student.grade] = (acc[student.grade] || 0) + 1;
-        return acc;
-      }, {});
+        // Finalize PDF
+        doc.end();
+        console.log('✅ PDF generated successfully');
+        
+      } catch (pdfError) {
+        console.error('PDF creation error:', pdfError);
+        res.status(500).json({ error: 'Failed to create PDF document' });
+      }
+    });
 
-      const majorCount = students.reduce((acc, student) => {
-        acc[student.major] = (acc[student.major] || 0) + 1;
-        return acc;
-      }, {});
-
-      let statsY = 150;
-      doc.fontSize(12).text('Grade Distribution:', 100, statsY);
-      statsY += 20;
-      Object.entries(gradeCount).forEach(([grade, count]) => {
-        doc.text(`• ${grade}: ${count} students (${((count / students.length) * 100).toFixed(1)}%)`, 120, statsY);
-        statsY += 15;
-      });
-
-      statsY += 20;
-      doc.text('Major Distribution:', 100, statsY);
-      statsY += 20;
-      Object.entries(majorCount).forEach(([major, count]) => {
-        doc.text(`• ${major}: ${count} students`, 120, statsY);
-        statsY += 15;
-      });
-
-      doc.end();
-    } catch (error) {
-      res.status(500).json({ error: 'Error generating PDF' });
-    }
-  });
+  } catch (error) {
+    console.error('PDF route error:', error);
+    res.status(500).json({ error: 'Failed to generate PDF report' });
+  }
 });
 
-// GET /export/statistics - Get statistics for dashboard
 router.get('/export/statistics', authenticateToken, (req, res) => {
   const queries = [
     'SELECT COUNT(*) as total_students FROM students',
@@ -652,53 +527,44 @@ router.get('/export/statistics', authenticateToken, (req, res) => {
     'SELECT AVG(age) as average_age FROM students'
   ];
 
-  db.serialize(() => {
-    const results = {};
-    
-    db.get(queries[0], (err, row) => {
-      if (!err) results.totalStudents = row.total_students;
-    });
-    
-    db.all(queries[1], (err, rows) => {
-      if (!err) results.majors = rows;
-    });
-    
-    db.all(queries[2], (err, rows) => {
-      if (!err) results.grades = rows;
-    });
-    
-    db.get(queries[3], (err, row) => {
-      if (!err) results.averageAge = Math.round(row.average_age);
-      
-      // Send all results
-      res.json(results);
-    });
+  const results = {};
+  
+  db.get(queries[0], (err, row) => {
+    if (!err) results.totalStudents = row.total_students;
+  });
+  
+  db.all(queries[1], (err, rows) => {
+    if (!err) results.majors = rows;
+  });
+  
+  db.all(queries[2], (err, rows) => {
+    if (!err) results.grades = rows;
+  });
+  
+  db.get(queries[3], (err, row) => {
+    if (!err) results.averageAge = Math.round(row.average_age || 0);
+    res.json(results);
   });
 });
 
-// ========== STUDENT ROUTES (WITH AUTHENTICATION) ==========
-
-// GET /students - Get all students with filtering, sorting, and searching
+// ========== STUDENT ROUTES ==========
 router.get('/', authenticateToken, (req, res) => {
   const { major, grade, sortBy, sortOrder = 'ASC', search } = req.query;
   
   let query = 'SELECT * FROM students WHERE 1=1';
   const params = [];
 
-  // If user is a student, only show their own data
   if (req.user.role === 'student' && req.user.studentId) {
     query += ' AND id = ?';
     params.push(req.user.studentId);
   }
 
-  // Search across multiple fields
   if (search) {
-    query += ' AND (name LIKE ? OR major LIKE ? OR grade LIKE ? OR CAST(age AS TEXT) LIKE ?)';
+    query += ' AND (name LIKE ? OR major LIKE ? OR grade LIKE ?)';
     const searchTerm = `%${search}%`;
-    params.push(searchTerm, searchTerm, searchTerm, searchTerm);
+    params.push(searchTerm, searchTerm, searchTerm);
   }
 
-  // Existing filters
   if (major) {
     query += ' AND major = ?';
     params.push(major);
@@ -725,7 +591,6 @@ router.get('/', authenticateToken, (req, res) => {
   });
 });
 
-// POST /students - Create new student (Admin only)
 router.post('/', authenticateToken, requireAdmin, (req, res) => {
   const { name, age, major, grade } = req.body;
   
@@ -742,15 +607,13 @@ router.post('/', authenticateToken, requireAdmin, (req, res) => {
         return;
       }
       res.status(201).json({ 
-        id: this.lastID, 
-        name, age, major, grade,
-        message: 'Student created successfully' 
+        message: 'Student created successfully',
+        student: { name, age, major, grade }
       });
     }
   );
 });
 
-// PUT /students/:id - Update student (Admin only)
 router.put('/:id', authenticateToken, requireAdmin, (req, res) => {
   const { id } = req.params;
   const { name, age, major, grade } = req.body;
@@ -773,13 +636,12 @@ router.put('/:id', authenticateToken, requireAdmin, (req, res) => {
       }
       res.json({ 
         message: 'Student updated successfully',
-        student: { id: parseInt(id), name, age: parseInt(age), major, grade }
+        student: { id, name, age: parseInt(age), major, grade }
       });
     }
   );
 });
 
-// DELETE /students/:id - Delete student (Admin only)
 router.delete('/:id', authenticateToken, requireAdmin, (req, res) => {
   const { id } = req.params;
   
@@ -797,13 +659,10 @@ router.delete('/:id', authenticateToken, requireAdmin, (req, res) => {
 });
 
 // ========== MARKS ROUTES ==========
-
-// GET /students/:id/marks - Get all marks for a student
 router.get('/:id/marks', authenticateToken, (req, res) => {
   const { id } = req.params;
   
-  // Check if user has permission to view these marks
-  if (req.user.role === 'student' && req.user.studentId != id) {
+  if (req.user.role === 'student' && req.user.studentId !== id) {
     return res.status(403).json({ error: 'Access denied' });
   }
 
@@ -822,7 +681,6 @@ router.get('/:id/marks', authenticateToken, (req, res) => {
   });
 });
 
-// POST /students/:id/marks - Add marks for a student (Admin only)
 router.post('/:id/marks', authenticateToken, requireAdmin, (req, res) => {
   const { id } = req.params;
   const { test_name, subject, marks_obtained, total_marks, test_date } = req.body;
@@ -843,15 +701,13 @@ router.post('/:id/marks', authenticateToken, requireAdmin, (req, res) => {
         return;
       }
       res.status(201).json({ 
-        id: this.lastID,
-        test_name, subject, marks_obtained, total_marks, percentage,
-        message: 'Marks added successfully' 
+        message: 'Marks added successfully',
+        marks: { test_name, subject, marks_obtained, total_marks, percentage }
       });
     }
   );
 });
 
-// GET /marks/subjects - Get all unique subjects
 router.get('/marks/subjects', authenticateToken, (req, res) => {
   db.all('SELECT DISTINCT subject FROM student_marks ORDER BY subject', (err, rows) => {
     if (err) {
@@ -859,68 +715,6 @@ router.get('/marks/subjects', authenticateToken, (req, res) => {
       return;
     }
     res.json(rows.map(row => row.subject));
-  });
-});
-
-// TEMPORARY: Delete user by username or email
-router.delete('/debug/delete-user/:identifier', (req, res) => {
-  const { identifier } = req.params;
-  
-  console.log(`Attempting to delete user: ${identifier}`);
-  
-  // First, find the user and their student_id
-  db.get('SELECT * FROM users WHERE username = ? OR email = ?', [identifier, identifier], (err, user) => {
-    if (err) {
-      return res.status(500).json({ error: err.message });
-    }
-    
-    if (!user) {
-      return res.status(404).json({ error: 'User not found' });
-    }
-    
-    console.log('Found user:', user);
-    
-    // Delete user account
-    db.run('DELETE FROM users WHERE id = ?', [user.id], function(err) {
-      if (err) {
-        return res.status(500).json({ error: err.message });
-      }
-      
-      console.log(`Deleted user: ${user.username}`);
-      
-      // If user has a student record, delete it too
-      if (user.student_id) {
-        db.run('DELETE FROM students WHERE id = ?', [user.student_id], function(err) {
-          if (err) {
-            console.warn('Could not delete student record:', err.message);
-          } else {
-            console.log(`Deleted student record: ${user.student_id}`);
-          }
-          
-          res.json({ 
-            message: `Successfully deleted user '${user.username}' and their student record`,
-            deletedUser: user.username,
-            deletedStudentId: user.student_id
-          });
-        });
-      } else {
-        res.json({ 
-          message: `Successfully deleted user '${user.username}'`,
-          deletedUser: user.username
-        });
-      }
-    });
-  });
-});
-
-// TEMPORARY: List all users
-router.get('/debug/all-users', (req, res) => {
-  db.all('SELECT id, username, email, role, student_id FROM users', (err, users) => {
-    if (err) {
-      return res.status(500).json({ error: err.message });
-    }
-    console.log('All users:', users);
-    res.json(users);
   });
 });
 
